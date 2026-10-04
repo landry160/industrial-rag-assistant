@@ -1,0 +1,19 @@
+# Fichiers locaux — ne sont PAS poussés sur le repo public
+PLAN-SESSION.md
+COMMANDES-GIT.md
+
+# Secrets — jamais dans git
+.env
+*.pem
+*.key
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# Node / Next.js
+node_modules/
+.next/
+out/
