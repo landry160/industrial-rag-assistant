@@ -7,8 +7,12 @@ Extension points for the build sessions (marked TODO-1..4):
   TODO-4  Ingest: chunk an uploaded document, embed, store in pgvector.
 """
 
-from fastapi import FastAPI, HTTPException, UploadFile, File
+from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
+
+from app.db import get_db_connection, init_db
+from app.embeddings import embed
+from app.chunking import chunk_text
 
 app = FastAPI(title="Industrial RAG Assistant API")
 
@@ -26,6 +30,15 @@ class Source(BaseModel):
 class AskResponse(BaseModel):
     answer: str
     sources: list[Source]
+
+
+class DocumentIn(BaseModel):
+    source: str
+    text: str
+
+
+class IngestRequest(BaseModel):
+    documents: list[DocumentIn]
 
 
 @app.get("/health")
@@ -46,10 +59,19 @@ def ask(req: AskRequest) -> AskResponse:
 
 
 @app.post("/ingest")
-async def ingest(file: UploadFile = File(...)) -> dict:
-    """Index a document (PDF/manual/procedure) into the vector store."""
-    # TODO-4: parse file -> chunk by section with overlap -> embed -> store
-    raise HTTPException(
-        status_code=501,
-        detail="Ingestion not implemented yet — see TODO-4 in api/app/main.py",
-    )
+def ingest(req: IngestRequest) -> dict:
+    """Index documents into the vector store: chunk -> embed -> store."""
+    init_db()
+    rows = []
+    for doc in req.documents:
+        for chunk in chunk_text(doc.text):
+            rows.append((doc.source, chunk))
+    vectors = embed([c for _, c in rows])
+    with get_db_connection() as conn:
+        with conn.cursor() as cur:
+            cur.executemany(
+                "INSERT INTO chunks (source, content, embedding) VALUES (%s, %s, %s)",
+                [(s, c, v) for (s, c), v in zip(rows, vectors)],
+            )
+        conn.commit()
+    return {"chunks_indexed": len(rows)}

@@ -1,0 +1,16 @@
+{
+  "documents": [
+    {
+      "source": "maintenance-convoyeur-C12.txt",
+      "text": "Procédure de maintenance — Convoyeur C-12\n\nLa courroie du convoyeur C-12 doit être inspectée visuellement chaque semaine. Vérifier l'absence de fissures, d'effilochage et de traces d'usure anormale sur les bords.\n\nTous les mois, contrôler la tension de la courroie : une flèche de 10 à 15 mm sous une pression modérée au centre du brin est normale. Resserrer via les vis de tension si la flèche dépasse 20 mm.\n\nLes roulements des tambours sont graissés tous les trimestres avec de la graisse NLGI 2. Un bruit de roulement anormal impose un arrêt immédiat et un remplacement."
+    },
+    {
+      "source": "securite-presse-H40.txt",
+      "text": "Fiche sécurité — Presse hydraulique H-40\n\nLe port des gants anti-écrasement et des lunettes est obligatoire dans un rayon de 3 mètres autour de la presse H-40 pendant son fonctionnement.\n\nAvant chaque cycle, vérifier que les deux boutons de commande bimanuelle fonctionnent : la presse ne doit démarrer que si les deux boutons sont pressés simultanément.\n\nEn cas de fuite hydraulique, couper l'alimentation, baliser la zone et prévenir la maintenance. Ne jamais tenter de colmater une fuite sous pression."
+    },
+    {
+      "source": "depannage-capteur-T88.txt",
+      "text": "Guide de dépannage — Capteur thermique T-88\n\nSi le capteur T-88 affiche une valeur figée, vérifier d'abord le câblage : connecteur bien enclenché, pas de corrosion sur les broches.\n\nUne dérive lente des mesures (plus de 2 degrés par heure sans cause process) indique généralement un encrassement de la sonde. Nettoyer à l'alcool isopropylique et recalibrer.\n\nSi l'erreur persiste après nettoyage, remplacer la sonde. Référence pièce : T88-PROBE-02."
+    }
+  ]
+}
