@@ -48,14 +48,30 @@ def health() -> dict:
 
 @app.post("/ask", response_model=AskResponse)
 def ask(req: AskRequest) -> AskResponse:
-    """Answer a technical question from the indexed documentation."""
-    # TODO-1: embed req.question -> query vector
-    # TODO-2: pgvector similarity search -> top-k chunks
-    # TODO-3: LLM call grounded on retrieved passages -> answer + citations
-    raise HTTPException(
-        status_code=501,
-        detail="RAG pipeline not implemented yet — see TODO-1..3 in api/app/main.py",
+    """Retrieve the most relevant chunks for a question (TODO-1 + TODO-2).
+    TODO-3 (LLM answer generation) comes next."""
+    qv = embed([req.question])[0]
+    qv_str = "[" + ",".join(str(x) for x in qv) + "]"
+    with get_db_connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT source, content, embedding <=> %s::vector AS dist "
+                "FROM chunks ORDER BY dist LIMIT 3",
+                (qv_str,),
+            )
+            rows = cur.fetchall()
+    sources = [
+        Source(document=src, section=content[:80], score=round(1 - dist, 4))
+        for src, content, dist in rows
+    ]
+    # TODO-3: replace with an LLM call grounded on the retrieved passages
+    context = "\n\n".join(f"[{src}] {content}" for src, content, _ in rows)
+    answer = (
+        "Réponse LLM : non implémentée (TODO-3).\n\n"
+        f"Passages les plus pertinents :\n\n{context}"
     )
+    return AskResponse(answer=answer, sources=sources)
+
 
 
 @app.post("/ingest")
