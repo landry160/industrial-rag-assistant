@@ -9,7 +9,7 @@ Extension points for the build sessions (marked TODO-1..4):
 
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
-
+from app.generate import generate_answer
 from app.db import get_db_connection, init_db
 from app.embeddings import embed
 from app.chunking import chunk_text
@@ -48,8 +48,7 @@ def health() -> dict:
 
 @app.post("/ask", response_model=AskResponse)
 def ask(req: AskRequest) -> AskResponse:
-    """Retrieve the most relevant chunks for a question (TODO-1 + TODO-2).
-    TODO-3 (LLM answer generation) comes next."""
+    """Full RAG: embed question -> retrieve top-k -> generate grounded answer."""
     qv = embed([req.question])[0]
     qv_str = "[" + ",".join(str(x) for x in qv) + "]"
     with get_db_connection() as conn:
@@ -60,17 +59,14 @@ def ask(req: AskRequest) -> AskResponse:
                 (qv_str,),
             )
             rows = cur.fetchall()
+    passages = [(src, content) for src, content, _ in rows]
     sources = [
         Source(document=src, section=content[:80], score=round(1 - dist, 4))
         for src, content, dist in rows
     ]
-    # TODO-3: replace with an LLM call grounded on the retrieved passages
-    context = "\n\n".join(f"[{src}] {content}" for src, content, _ in rows)
-    answer = (
-        "Réponse LLM : non implémentée (TODO-3).\n\n"
-        f"Passages les plus pertinents :\n\n{context}"
-    )
+    answer = generate_answer(req.question, passages)
     return AskResponse(answer=answer, sources=sources)
+
 
 
 
