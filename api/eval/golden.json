@@ -1,0 +1,22 @@
+{
+  "answerable": [
+    {"question": "À quelle fréquence inspecter la courroie du convoyeur C-12 ?", "document": "maintenance-convoyeur-C12.txt", "contains": "chaque semaine"},
+    {"question": "Quelle flèche est normale pour la courroie du convoyeur ?", "document": "maintenance-convoyeur-C12.txt", "contains": "10 à 15 mm"},
+    {"question": "Quand faut-il resserrer la courroie ?", "document": "maintenance-convoyeur-C12.txt", "contains": "20 mm"},
+    {"question": "Quelle graisse utiliser pour les roulements des tambours ?", "document": "maintenance-convoyeur-C12.txt", "contains": "NLGI 2"},
+    {"question": "Que faire si un roulement fait un bruit anormal ?", "document": "maintenance-convoyeur-C12.txt", "contains": "arrêt immédiat"},
+    {"question": "Quels équipements de protection porter près de la presse H-40 ?", "document": "securite-presse-H40.txt", "contains": "gants anti-écrasement"},
+    {"question": "Quelle vérification faire avant chaque cycle de la presse ?", "document": "securite-presse-H40.txt", "contains": "commande bimanuelle"},
+    {"question": "Que faire en cas de fuite d'huile sur la presse hydraulique ?", "document": "securite-presse-H40.txt", "contains": "couper l'alimentation"},
+    {"question": "Le capteur T-88 affiche une valeur figée, que vérifier ?", "document": "depannage-capteur-T88.txt", "contains": "câblage"},
+    {"question": "Comment corriger une dérive lente de température ?", "document": "depannage-capteur-T88.txt", "contains": "alcool isopropylique"},
+    {"question": "Quelle est la référence de la sonde de remplacement ?", "document": "depannage-capteur-T88.txt", "contains": "T88-PROBE-02"},
+    {"question": "À quoi sert la pièce T88-PROBE-02 ?", "document": "depannage-capteur-T88.txt", "contains": "T88-PROBE-02"}
+  ],
+  "out_of_scope": [
+    "Quel est le couple de serrage de la pompe P-101 ?",
+    "Qui a gagné la Coupe Stanley en 2019 ?",
+    "Quelle est la recette de la tarte aux pommes ?",
+    "Quelle est la pression maximale du compresseur K-7 ?"
+  ]
+}

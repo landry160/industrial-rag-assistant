@@ -1,28 +1,103 @@
-"""Industrial RAG Assistant — API service.
+"""Industrial RAG Assistant — API service."""
 
-Extension points for the build sessions (marked TODO-1..4):
-  TODO-1  Embed the incoming question (embeddings provider).
-  TODO-2  Retrieve top-k chunks from pgvector (vector similarity).
-  TODO-3  Generate the answer from retrieved passages only (LLM call).
-  TODO-4  Ingest: chunk an uploaded document, embed, store in pgvector.
-"""
+import json
+import logging
+import secrets
+from contextlib import asynccontextmanager
+from pathlib import Path
 
-from fastapi import FastAPI, HTTPException
-from pydantic import BaseModel
-from app.generate import generate_answer
-from app.db import get_db_connection, init_db
-from app.embeddings import embed
-from app.chunking import chunk_text
+import psycopg
+from fastapi import Depends, FastAPI, Header, HTTPException, Request, UploadFile
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
+from pydantic import BaseModel, Field, field_validator
 
-app = FastAPI(title="Industrial RAG Assistant API")
+from app import config
+from app.db import init_db
+from app.generate import active_model, active_provider, generate_answer
+from app.ingestion import IngestResult, delete_document, ingest_sections, list_documents
+from app.parsing import ALLOWED_EXTENSIONS, Section, UnsupportedDocument, parse_document
+from app.ratelimit import RateLimiter
+from app.retrieval import retrieve
+
+logging.basicConfig(level=logging.INFO)
+log = logging.getLogger(__name__)
+
+SAMPLE_CORPUS = Path(__file__).resolve().parent.parent / "data" / "sample_corpus.json"
+limiter = RateLimiter(config.RATE_LIMIT_PER_MINUTE)
+
+
+def ingest_sample() -> list[IngestResult]:
+    corpus = json.loads(SAMPLE_CORPUS.read_text(encoding="utf-8"))
+    return [
+        ingest_sections(
+            doc["source"],
+            [Section(page=None, text=doc["text"])],
+            doc["text"].encode("utf-8"),
+        )
+        for doc in corpus["documents"]
+    ]
+
+
+@asynccontextmanager
+async def lifespan(_: FastAPI):
+    init_db()
+    if config.SEED_SAMPLE:
+        ingest_sample()
+    yield
+
+
+app = FastAPI(title="Industrial RAG Assistant API", lifespan=lifespan)
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=config.ALLOWED_ORIGINS,
+    allow_methods=["GET", "POST", "DELETE"],
+    allow_headers=["Content-Type", "X-Admin-Token"],
+)
+
+
+@app.exception_handler(psycopg.OperationalError)
+async def database_unavailable(_: Request, exc: psycopg.OperationalError):
+    log.error("Base de données injoignable : %s", exc)
+    return JSONResponse(
+        status_code=503,
+        content={"detail": "La base de données est injoignable pour le moment."},
+    )
+
+
+def require_admin(x_admin_token: str | None = Header(default=None)) -> None:
+    """Writes are open locally and closed as soon as ADMIN_TOKEN is set."""
+    if config.ADMIN_TOKEN and not secrets.compare_digest(
+        (x_admin_token or "").encode(), config.ADMIN_TOKEN.encode()
+    ):
+        raise HTTPException(status_code=401, detail="Code d'accès requis ou invalide.")
+
+
+def rate_limited(request: Request) -> None:
+    client = request.client.host if request.client else "unknown"
+    if not limiter.allow(client):
+        raise HTTPException(
+            status_code=429,
+            detail="Trop de questions en peu de temps. Réessayez dans une minute.",
+        )
 
 
 class AskRequest(BaseModel):
-    question: str
+    question: str = Field(max_length=1000)
+
+    @field_validator("question")
+    @classmethod
+    def not_blank(cls, value: str) -> str:
+        value = value.strip()
+        if len(value) < 3:
+            raise ValueError("La question est trop courte.")
+        return value
 
 
 class Source(BaseModel):
+    id: int
     document: str
+    page: int | None
     section: str
     score: float
 
@@ -30,15 +105,18 @@ class Source(BaseModel):
 class AskResponse(BaseModel):
     answer: str
     sources: list[Source]
+    grounded: bool
+    mode: str
+    notice: str | None = None
 
 
 class DocumentIn(BaseModel):
-    source: str
-    text: str
+    source: str = Field(min_length=1, max_length=255)
+    text: str = Field(min_length=1)
 
 
 class IngestRequest(BaseModel):
-    documents: list[DocumentIn]
+    documents: list[DocumentIn] = Field(min_length=1)
 
 
 @app.get("/health")
@@ -46,44 +124,91 @@ def health() -> dict:
     return {"status": "ok"}
 
 
-@app.post("/ask", response_model=AskResponse)
+@app.get("/config")
+def public_config() -> dict:
+    return {
+        "provider": active_provider(),
+        "model": active_model(),
+        "embedding_model": config.EMBEDDING_ID,
+        "writes_protected": bool(config.ADMIN_TOKEN),
+        "max_upload_mb": config.MAX_UPLOAD_MB,
+        "extensions": sorted(ALLOWED_EXTENSIONS),
+    }
+
+
+@app.post("/ask", response_model=AskResponse, dependencies=[Depends(rate_limited)])
 def ask(req: AskRequest) -> AskResponse:
-    """Full RAG: embed question -> retrieve top-k -> generate grounded answer."""
-    qv = embed([req.question])[0]
-    qv_str = "[" + ",".join(str(x) for x in qv) + "]"
-    with get_db_connection() as conn:
-        with conn.cursor() as cur:
-            cur.execute(
-                "SELECT source, content, embedding <=> %s::vector AS dist "
-                "FROM chunks ORDER BY dist LIMIT 3",
-                (qv_str,),
+    """Hybrid retrieval, then a grounded answer whose citations are verified."""
+    result = generate_answer(req.question, retrieve(req.question))
+    return AskResponse(
+        answer=result.answer,
+        sources=[
+            Source(
+                id=n,
+                document=hit.document,
+                page=hit.page,
+                section=hit.content,
+                score=hit.score,
             )
-            rows = cur.fetchall()
-    passages = [(src, content) for src, content, _ in rows]
-    sources = [
-        Source(document=src, section=content[:80], score=round(1 - dist, 4))
-        for src, content, dist in rows
+            for n, hit in enumerate(result.hits, start=1)
+        ],
+        grounded=result.grounded,
+        mode=result.mode,
+        notice=result.notice,
+    )
+
+
+@app.post("/ingest", dependencies=[Depends(require_admin)])
+def ingest(file: UploadFile) -> dict:
+    """Index one uploaded PDF, TXT or MD file."""
+    limit = config.MAX_UPLOAD_MB * 1024 * 1024
+    data = file.file.read(limit + 1)
+    if len(data) > limit:
+        raise HTTPException(
+            status_code=413,
+            detail=f"Fichier trop volumineux (maximum {config.MAX_UPLOAD_MB} Mo).",
+        )
+    name = file.filename or "document.txt"
+    try:
+        sections = parse_document(name, data)
+    except UnsupportedDocument as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    result = ingest_sections(name, sections, data)
+    return {
+        "chunks_indexed": result.chunks_indexed,
+        "source": result.source,
+        "status": result.status,
+    }
+
+
+@app.post("/ingest/json", dependencies=[Depends(require_admin)])
+def ingest_json(req: IngestRequest) -> dict:
+    """Index raw text documents, for scripts."""
+    results = [
+        ingest_sections(
+            doc.source, [Section(page=None, text=doc.text)], doc.text.encode("utf-8")
+        )
+        for doc in req.documents
     ]
-    answer = generate_answer(req.question, passages)
-    return AskResponse(answer=answer, sources=sources)
+    return {"chunks_indexed": sum(r.chunks_indexed for r in results)}
 
 
+@app.post("/ingest/sample", dependencies=[Depends(require_admin)])
+def ingest_sample_route() -> dict:
+    results = ingest_sample()
+    return {
+        "chunks_indexed": sum(r.chunks_indexed for r in results),
+        "documents": len(results),
+    }
 
 
-@app.post("/ingest")
-def ingest(req: IngestRequest) -> dict:
-    """Index documents into the vector store: chunk -> embed -> store."""
-    init_db()
-    rows = []
-    for doc in req.documents:
-        for chunk in chunk_text(doc.text):
-            rows.append((doc.source, chunk))
-    vectors = embed([c for _, c in rows])
-    with get_db_connection() as conn:
-        with conn.cursor() as cur:
-            cur.executemany(
-                "INSERT INTO chunks (source, content, embedding) VALUES (%s, %s, %s)",
-                [(s, c, v) for (s, c), v in zip(rows, vectors)],
-            )
-        conn.commit()
-    return {"chunks_indexed": len(rows)}
+@app.get("/documents")
+def documents() -> dict:
+    return {"documents": list_documents()}
+
+
+@app.delete("/documents/{document_id}", dependencies=[Depends(require_admin)])
+def remove_document(document_id: int) -> dict:
+    if not delete_document(document_id):
+        raise HTTPException(status_code=404, detail="Ce document n'existe plus.")
+    return {"deleted": True}
