@@ -1,0 +1,14 @@
+# docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --build
+# Set ADMIN_TOKEN, ALLOWED_ORIGINS and NEXT_PUBLIC_API_URL in .env first.
+services:
+  db:
+    ports: !reset []
+    restart: unless-stopped
+  api:
+    environment:
+      ADMIN_TOKEN: ${ADMIN_TOKEN:?ADMIN_TOKEN est requis en production}
+      ALLOWED_ORIGINS: ${ALLOWED_ORIGINS:?ALLOWED_ORIGINS est requis en production}
+      SEED_SAMPLE: "true"
+    restart: unless-stopped
+  web:
+    restart: unless-stopped
